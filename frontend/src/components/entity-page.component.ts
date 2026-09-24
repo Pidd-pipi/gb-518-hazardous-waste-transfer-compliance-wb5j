@@ -12,12 +12,13 @@ import { formatDate } from '../utils/format';
 import { ConfirmDialogComponent } from './common/confirm-dialog.component';
 import { LicensePanelComponent } from './common/license-panel.component';
 import { MetricCardComponent } from './common/metric-card.component';
+import { QuotaUsageComponent } from './common/quota-usage.component';
 import { StatusBadgeComponent } from './common/status-badge.component';
 
 @Component({
   selector: 'app-entity-page',
   standalone: true,
-  imports: [CommonModule, AsyncPipe, FormsModule, MatButtonModule, MatInputModule, StatusBadgeComponent, MetricCardComponent, ConfirmDialogComponent, LicensePanelComponent],
+  imports: [CommonModule, AsyncPipe, FormsModule, MatButtonModule, MatInputModule, StatusBadgeComponent, MetricCardComponent, ConfirmDialogComponent, LicensePanelComponent, QuotaUsageComponent],
   template: `
     <main class="workspace" *ngIf="store.state$ | async as state">
       <header class="page-header">
@@ -48,7 +49,15 @@ import { StatusBadgeComponent } from './common/status-badge.component';
               <td><strong>{{ item.code }}</strong></td>
               <td>{{ item.name }}<small>{{ item.facility }}</small></td>
               <td><app-status-badge [status]="item.status" /></td>
-              <td><span class="domain-detail">{{ domainDetail(item) }}</span><small>{{ item.evidence }}</small></td>
+              <td><span class="domain-detail">{{ domainDetail(item) }}</span><small>{{ item.evidence }}</small>
+                <app-quota-usage
+                  *ngIf="showQuota(item)"
+                  [usage]="item.quotaUsage"
+                  [requestedKg]="config.key === 'transferManifest' ? item.quantityKg : undefined"
+                  class="row-quota">
+                  <ng-container *ngIf="config.key === 'transferManifest'"> · 本次 {{ item.quantityKg }} kg</ng-container>
+                </app-quota-usage>
+              </td>
               <td><span [class]="'risk risk--' + item.riskLevel">{{ item.riskLevel }}</span></td>
               <td>{{ item.owner }}</td>
               <td>{{ item.metricValue }} {{ item.metricUnit }}</td>
@@ -77,6 +86,12 @@ import { StatusBadgeComponent } from './common/status-badge.component';
       </app-confirm-dialog>
       <app-confirm-dialog [open]="!!pending" title="确认状态迁移" (cancel)="closeTransition()" (confirm)="confirmTransition()">
         <p>状态迁移会校验关联资质，并与请求 ID 审计记录在同一事务中保存。</p>
+        <app-quota-usage
+          *ngIf="pending?.status === 'submitted' && pending.item.quotaUsage"
+          [usage]="pending.item.quotaUsage"
+          [requestedKg]="pending.item.quantityKg">
+          <ng-container> · 本次 {{ pending.item.quantityKg }} kg，超限将保留草稿</ng-container>
+        </app-quota-usage>
         <strong>{{ pending?.item?.status }} → {{ pending?.status }}</strong>
       </app-confirm-dialog>
     </main>
@@ -113,10 +128,14 @@ export class EntityPageComponent implements OnInit {
   }
 
   domainDetail(item: DomainRecord): string {
-    if (this.config.key === 'wasteGenerator') return `${item.permitNumber || '-'} · ${item.wasteCategories || '-'}`;
+    if (this.config.key === 'wasteGenerator') return `${item.permitNumber || '-'} · ${item.wasteCategories || '-'} · 年度上限 ${item.annualQuotaKg ? item.annualQuotaKg + ' kg' : '未设置'}`;
     if (this.config.key === 'carrierProfile') return `${item.licenseNumber || '-'} · ${item.vehicleCount || 0} 辆`;
     if (this.config.key === 'transferManifest') return `${item.generatorCode} → ${item.carrierCode} · ${item.quantityKg} kg`;
     return `${item.manifestCode || '-'} · ${item.decisionBasis || '待决定'}`;
+  }
+
+  showQuota(item: DomainRecord): boolean {
+    return (this.config.key === 'wasteGenerator' || this.config.key === 'transferManifest') && !!item.quotaUsage;
   }
 
   transitionLabel(status: string): string {
@@ -144,7 +163,7 @@ export class EntityPageComponent implements OnInit {
     };
     const expiresAt = new Date(now + 365 * 86_400_000).toISOString();
     const specific: Partial<DomainRecord> = this.config.key === 'wasteGenerator'
-      ? { permitNumber: `PERMIT-${String(now).slice(-8)}`, permitExpiresAt: expiresAt, wasteCategories: 'HW08 废矿物油' }
+      ? { permitNumber: `PERMIT-${String(now).slice(-8)}`, permitExpiresAt: expiresAt, annualQuotaKg: 5000, wasteCategories: 'HW08 废矿物油' }
       : this.config.key === 'carrierProfile'
         ? { licenseNumber: `CARRIER-${String(now).slice(-8)}`, licenseExpiresAt: expiresAt, vehicleCount: 6 }
         : this.config.key === 'transferManifest'

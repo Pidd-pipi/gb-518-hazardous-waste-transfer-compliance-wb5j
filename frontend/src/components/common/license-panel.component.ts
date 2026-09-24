@@ -3,12 +3,13 @@ import { CommonModule } from '@angular/common';
 import { Component, Input } from '@angular/core';
 import type { DomainRecord } from '../../types/domain';
 import { daysUntil, formatDate } from '../../utils/format';
+import { QuotaUsageComponent } from './quota-usage.component';
 import { StatusBadgeComponent } from './status-badge.component';
 
 @Component({
   selector: 'app-license-panel',
   standalone: true,
-  imports: [CommonModule, StatusBadgeComponent],
+  imports: [CommonModule, StatusBadgeComponent, QuotaUsageComponent],
   template: `
     <section class="license-panel" aria-label="许可资质摘要">
       <header><strong>许可资质摘要</strong><span>{{ records.length }} 条记录</span></header>
@@ -19,6 +20,7 @@ import { StatusBadgeComponent } from './status-badge.component';
           <small [class.expiring]="remaining(item) !== null && remaining(item)! < 30">
             有效期至 {{ formatDate(expiry(item)) }}
           </small>
+          <app-quota-usage *ngIf="item.quotaUsage" [usage]="item.quotaUsage" class="evidence-strip__quota" />
         </article>
       </div>
       <ng-template #empty><div class="empty">暂无许可资质</div></ng-template>

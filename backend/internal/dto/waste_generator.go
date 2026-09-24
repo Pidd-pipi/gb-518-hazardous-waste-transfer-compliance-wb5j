@@ -9,6 +9,7 @@ type CreateWasteGenerator struct {
 	Name            string    `json:"name" binding:"required,min=2,max=160"`
 	PermitNumber    string    `json:"permitNumber" binding:"required,min=3,max=80"`
 	PermitExpiresAt time.Time `json:"permitExpiresAt" binding:"required"`
+	AnnualQuotaKg   float64   `json:"annualQuotaKg" binding:"required,gt=0"`
 	WasteCategories string    `json:"wasteCategories" binding:"required,max=500"`
 	Description     string    `json:"description" binding:"max=1000"`
 	Facility        string    `json:"facility" binding:"required,max=120"`
@@ -27,6 +28,7 @@ type UpdateWasteGenerator struct {
 	Name            string    `json:"name" binding:"required,min=2,max=160"`
 	PermitNumber    string    `json:"permitNumber" binding:"required,min=3,max=80"`
 	PermitExpiresAt time.Time `json:"permitExpiresAt" binding:"required"`
+	AnnualQuotaKg   float64   `json:"annualQuotaKg" binding:"required,gt=0"`
 	WasteCategories string    `json:"wasteCategories" binding:"required,max=500"`
 	Description     string    `json:"description" binding:"max=1000"`
 	Facility        string    `json:"facility" binding:"required,max=120"`

@@ -1,4 +1,13 @@
 
+export interface QuotaUsage {
+  generatorCode: string;
+  year: number;
+  annualQuotaKg: number;
+  usedKg: number;
+  remainingKg: number;
+  limited: boolean;
+}
+
 export interface DomainRecord {
   id: number;
   code: string;
@@ -18,6 +27,7 @@ export interface DomainRecord {
 	permitNumber?: string;
 	permitExpiresAt?: string;
 	wasteCategories?: string;
+	annualQuotaKg?: number;
 	licenseNumber?: string;
 	licenseExpiresAt?: string;
 	vehicleCount?: number;
@@ -29,6 +39,7 @@ export interface DomainRecord {
 	manifestCode?: string;
 	checklist?: string;
 	decisionBasis?: string;
+	quotaUsage?: QuotaUsage | null;
   createdAt: string;
   updatedAt: string;
 }

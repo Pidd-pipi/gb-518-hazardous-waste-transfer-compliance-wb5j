@@ -26,18 +26,33 @@ type transferManifestService struct {
 	repository repository.TransferManifestRepository
 	generators repository.WasteGeneratorRepository
 	carriers   repository.CarrierProfileRepository
+	quota      *quotaService
 }
 
 func NewTransferManifestService(repo repository.TransferManifestRepository, generators repository.WasteGeneratorRepository, carriers repository.CarrierProfileRepository) TransferManifestService {
-	return &transferManifestService{repository: repo, generators: generators, carriers: carriers}
+	return &transferManifestService{repository: repo, generators: generators, carriers: carriers, quota: newQuotaService(repo, generators)}
 }
 
 func (s *transferManifestService) List(ctx context.Context, query dto.PageQuery) (repository.Page[model.TransferManifest], error) {
-	return s.repository.List(ctx, query)
+	page, err := s.repository.List(ctx, query)
+	if err != nil {
+		return page, err
+	}
+	if err := s.quota.decorateManifests(ctx, page.Items); err != nil {
+		return repository.Page[model.TransferManifest]{}, fmt.Errorf("load manifest quota usage: %w", err)
+	}
+	return page, nil
 }
 
 func (s *transferManifestService) Get(ctx context.Context, id uint) (model.TransferManifest, error) {
-	return s.repository.Get(ctx, id)
+	item, err := s.repository.Get(ctx, id)
+	if err != nil {
+		return model.TransferManifest{}, err
+	}
+	if err := s.quota.decorateManifest(ctx, &item); err != nil {
+		return model.TransferManifest{}, fmt.Errorf("load manifest quota usage: %w", err)
+	}
+	return item, nil
 }
 
 func (s *transferManifestService) Create(ctx context.Context, input dto.CreateTransferManifest, actor, requestID string) (model.TransferManifest, error) {
@@ -124,6 +139,9 @@ func (s *transferManifestService) Transition(ctx context.Context, id uint, input
 			return model.TransferManifest{}, err
 		}
 	}
+	if target == "submitted" {
+		return s.submitWithQuota(ctx, current, input, actor, requestID)
+	}
 	before := current.Status
 	current.Status = target
 	current.Version = input.ExpectedVersion + 1
@@ -132,6 +150,59 @@ func (s *transferManifestService) Transition(ctx context.Context, id uint, input
 		return model.TransferManifest{}, fmt.Errorf("transition 转运清单: %w", err)
 	}
 	return s.repository.Get(ctx, id)
+}
+
+// submitWithQuota serializes on the linked generator row inside one database
+// transaction. If the annual quota would be exceeded the manifest stays a
+// draft, a "quota_blocked" audit row is committed, and ErrQuotaExceeded
+// carries the used/remaining/requested weight back to the operator.
+func (s *transferManifestService) submitWithQuota(ctx context.Context, current model.TransferManifest, input dto.TransitionRequest, actor, requestID string) (model.TransferManifest, error) {
+	var quotaErr *ErrQuotaExceeded
+	blockedAudit := newAuditLog(actor, requestID, "quota_blocked", "TransferManifest", "draft", "draft", "annual quota exceeded; manifest kept as draft")
+	decide := func(generator model.WasteGenerator, manifest model.TransferManifest, usedKg float64) (repository.QuotaDecision, error) {
+		if manifest.Status != "draft" {
+			return repository.QuotaDecision{}, ErrInvalidTransition
+		}
+		if generator.AnnualQuotaKg <= 0 {
+			return repository.QuotaDecision{Allowed: true, TargetStatus: "submitted", Reason: input.Reason}, nil
+		}
+		remaining := generator.AnnualQuotaKg - usedKg
+		if usedKg+manifest.QuantityKg > generator.AnnualQuotaKg {
+			quotaErr = &ErrQuotaExceeded{
+				GeneratorCode: generator.Code,
+				Year:          manifest.EffectiveAt.UTC().Year(),
+				AnnualQuotaKg: generator.AnnualQuotaKg,
+				UsedKg:        usedKg,
+				RemainingKg:   remaining,
+				RequestedKg:   manifest.QuantityKg,
+			}
+			blockedAudit.Detail = quotaErr.Error()
+			return repository.QuotaDecision{
+				Allowed:      false,
+				TargetStatus: "draft",
+				Reason:       quotaErr.Error(),
+			}, nil
+		}
+		return repository.QuotaDecision{Allowed: true, TargetStatus: "submitted", Reason: input.Reason}, nil
+	}
+	audit := newAuditLog(actor, requestID, "transition", "TransferManifest", "draft", "submitted", input.Reason)
+	updated, err := s.repository.SubmitWithQuota(ctx, current.ID, input.ExpectedVersion, decide, audit, blockedAudit)
+	if quotaErr != nil {
+		// Quota blocked: the blocked audit row was committed, the manifest is
+		// still a draft. Re-read so version and timestamps reflect reality.
+		draft, getErr := s.repository.Get(ctx, current.ID)
+		if getErr == nil {
+			_ = s.quota.decorateManifest(ctx, &draft)
+		}
+		return draft, quotaErr
+	}
+	if err != nil {
+		return model.TransferManifest{}, fmt.Errorf("transition 转运清单: %w", err)
+	}
+	if err := s.quota.decorateManifest(ctx, &updated); err != nil {
+		return model.TransferManifest{}, fmt.Errorf("load manifest quota usage: %w", err)
+	}
+	return updated, nil
 }
 
 func (s *transferManifestService) Delete(ctx context.Context, id uint, actor, requestID string) error {

@@ -12,7 +12,22 @@ import (
 )
 
 func handleError(c *gin.Context, err error) {
+	var quotaExceeded *service.ErrQuotaExceeded
 	switch {
+	case errors.As(err, &quotaExceeded):
+		c.AbortWithStatusJSON(http.StatusUnprocessableEntity, util.Envelope{
+			Error:   "annual_quota_exceeded",
+			Message: err.Error(),
+			Meta: gin.H{
+				"generatorCode": quotaExceeded.GeneratorCode,
+				"year":          quotaExceeded.Year,
+				"annualQuotaKg": quotaExceeded.AnnualQuotaKg,
+				"usedKg":        quotaExceeded.UsedKg,
+				"remainingKg":   quotaExceeded.RemainingKg,
+				"requestedKg":   quotaExceeded.RequestedKg,
+				"keptAsDraft":   true,
+			},
+		})
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		util.Fail(c, http.StatusNotFound, "not_found", "record was not found")
 	case errors.Is(err, repository.ErrVersionConflict):

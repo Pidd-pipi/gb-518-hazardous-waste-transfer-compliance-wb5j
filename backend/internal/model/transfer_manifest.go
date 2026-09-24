@@ -21,6 +21,9 @@ type TransferManifest struct {
 	EffectiveAt   time.Time `json:"effectiveAt"`
 	Evidence      string    `json:"evidence" gorm:"size:2000"`
 	RelatedCode   string    `json:"relatedCode" gorm:"size:64;index"`
+	// QuotaUsage is derived for the natural year of EffectiveAt and is never
+	// persisted; nil means the linked generator no longer resolves.
+	QuotaUsage *QuotaUsage `json:"quotaUsage,omitempty" gorm:"-"`
 }
 
 func (item *TransferManifest) GetBase() *BaseModel { return &item.BaseModel }

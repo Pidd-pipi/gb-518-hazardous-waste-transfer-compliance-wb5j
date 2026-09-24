@@ -25,18 +25,33 @@ type WasteGeneratorService interface {
 type wasteGeneratorService struct {
 	repository repository.WasteGeneratorRepository
 	security   SecurityService
+	quota      *quotaService
 }
 
-func NewWasteGeneratorService(repo repository.WasteGeneratorRepository, security SecurityService) WasteGeneratorService {
-	return &wasteGeneratorService{repository: repo, security: security}
+func NewWasteGeneratorService(repo repository.WasteGeneratorRepository, security SecurityService, manifests repository.TransferManifestRepository) WasteGeneratorService {
+	return &wasteGeneratorService{repository: repo, security: security, quota: newQuotaService(manifests, repo)}
 }
 
 func (s *wasteGeneratorService) List(ctx context.Context, query dto.PageQuery) (repository.Page[model.WasteGenerator], error) {
-	return s.repository.List(ctx, query)
+	page, err := s.repository.List(ctx, query)
+	if err != nil {
+		return page, err
+	}
+	if err := s.quota.decorateGenerators(ctx, page.Items); err != nil {
+		return repository.Page[model.WasteGenerator]{}, fmt.Errorf("load generator quota usage: %w", err)
+	}
+	return page, nil
 }
 
 func (s *wasteGeneratorService) Get(ctx context.Context, id uint) (model.WasteGenerator, error) {
-	return s.repository.Get(ctx, id)
+	item, err := s.repository.Get(ctx, id)
+	if err != nil {
+		return model.WasteGenerator{}, err
+	}
+	if err := s.quota.decorateGenerator(ctx, &item, time.Now().UTC().Year()); err != nil {
+		return model.WasteGenerator{}, fmt.Errorf("load generator quota usage: %w", err)
+	}
+	return item, nil
 }
 
 func (s *wasteGeneratorService) Create(ctx context.Context, input dto.CreateWasteGenerator, actor, requestID string) (model.WasteGenerator, error) {
@@ -49,6 +64,7 @@ func (s *wasteGeneratorService) Create(ctx context.Context, input dto.CreateWast
 			Status: model.WasteGeneratorInitialStatus, Version: 1, Description: strings.TrimSpace(input.Description),
 		},
 		PermitNumber: strings.ToUpper(strings.TrimSpace(input.PermitNumber)), PermitExpiresAt: input.PermitExpiresAt.UTC(),
+		AnnualQuotaKg:   input.AnnualQuotaKg,
 		WasteCategories: strings.TrimSpace(input.WasteCategories),
 		Facility:        strings.TrimSpace(input.Facility), Owner: strings.TrimSpace(input.Owner),
 		Category: strings.TrimSpace(input.Category), RiskLevel: input.RiskLevel,
@@ -73,6 +89,7 @@ func (s *wasteGeneratorService) Update(ctx context.Context, id uint, input dto.U
 	current.Name = strings.TrimSpace(input.Name)
 	current.PermitNumber = strings.ToUpper(strings.TrimSpace(input.PermitNumber))
 	current.PermitExpiresAt = input.PermitExpiresAt.UTC()
+	current.AnnualQuotaKg = input.AnnualQuotaKg
 	current.WasteCategories = strings.TrimSpace(input.WasteCategories)
 	current.Description = strings.TrimSpace(input.Description)
 	current.Facility = strings.TrimSpace(input.Facility)
