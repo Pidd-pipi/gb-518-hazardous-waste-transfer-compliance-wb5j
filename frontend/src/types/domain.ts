@@ -17,6 +17,7 @@ export interface DomainRecord {
   relatedCode: string;
 	permitNumber?: string;
 	permitExpiresAt?: string;
+	annualQuotaKg?: number;
 	wasteCategories?: string;
 	licenseNumber?: string;
 	licenseExpiresAt?: string;
@@ -34,6 +35,16 @@ export interface DomainRecord {
 }
 
 export interface PageMeta { page: number; pageSize: number; total: number }
+export interface QuotaUsage {
+  generatorCode: string;
+  generatorName: string;
+  year: number;
+  annualQuotaKg: number;
+  usedKg: number;
+  remainingKg: number;
+  exceededKg: number;
+  exceeded: boolean;
+}
 export interface ApiEnvelope<T> { data: T; error?: string; message?: string; meta?: PageMeta }
 export type UserRole = 'viewer' | 'operator' | 'reviewer' | 'admin';
 export interface UserSession { token: string; username: string; displayName: string; role: UserRole; expiresIn: number; requestId?: string }

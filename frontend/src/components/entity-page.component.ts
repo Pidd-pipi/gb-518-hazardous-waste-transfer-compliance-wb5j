@@ -5,19 +5,21 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatInputModule } from '@angular/material/input';
 import { useAuth } from '../hooks/use-auth';
 import { createPagination } from '../hooks/use-pagination';
+import { QuotaStore } from '../stores/quota.store';
 import type { EntityStore } from '../stores/factory';
-import type { DomainRecord, EntityConfig } from '../types/domain';
+import type { DomainRecord, EntityConfig, QuotaUsage } from '../types/domain';
 import { TRANSITIONS } from '../types/status';
 import { formatDate } from '../utils/format';
 import { ConfirmDialogComponent } from './common/confirm-dialog.component';
 import { LicensePanelComponent } from './common/license-panel.component';
 import { MetricCardComponent } from './common/metric-card.component';
+import { QuotaPanelComponent } from './common/quota-panel.component';
 import { StatusBadgeComponent } from './common/status-badge.component';
 
 @Component({
   selector: 'app-entity-page',
   standalone: true,
-  imports: [CommonModule, AsyncPipe, FormsModule, MatButtonModule, MatInputModule, StatusBadgeComponent, MetricCardComponent, ConfirmDialogComponent, LicensePanelComponent],
+  imports: [CommonModule, AsyncPipe, FormsModule, MatButtonModule, MatInputModule, StatusBadgeComponent, MetricCardComponent, ConfirmDialogComponent, LicensePanelComponent, QuotaPanelComponent],
   template: `
     <main class="workspace" *ngIf="store.state$ | async as state">
       <header class="page-header">
@@ -26,6 +28,7 @@ import { StatusBadgeComponent } from './common/status-badge.component';
       </header>
 
       <app-license-panel *ngIf="isLicensePage()" [records]="state.items" />
+      <app-quota-panel *ngIf="isQuotaPage()" [rows]="quotaRows()" [year]="currentYear()" [mode]="config.key === 'wasteGenerator' ? 'generator' : 'manifest'" />
 
       <section class="metrics">
         <app-metric-card label="记录总数" [value]="state.meta.total" detail="当前查询结果" />
@@ -48,7 +51,7 @@ import { StatusBadgeComponent } from './common/status-badge.component';
               <td><strong>{{ item.code }}</strong></td>
               <td>{{ item.name }}<small>{{ item.facility }}</small></td>
               <td><app-status-badge [status]="item.status" /></td>
-              <td><span class="domain-detail">{{ domainDetail(item) }}</span><small>{{ item.evidence }}</small></td>
+              <td><span class="domain-detail">{{ domainDetail(item) }}</span><small>{{ item.evidence }}</small><small *ngIf="quotaLine(item) as quota" [class.text-over]="quota.exceeded">{{ quota.text }}</small></td>
               <td><span [class]="'risk risk--' + item.riskLevel">{{ item.riskLevel }}</span></td>
               <td>{{ item.owner }}</td>
               <td>{{ item.metricValue }} {{ item.metricUnit }}</td>
@@ -88,6 +91,7 @@ export class EntityPageComponent implements OnInit {
   readonly auth = useAuth();
   readonly formatDate = formatDate;
   readonly pagination = createPagination(() => this.store?.snapshot.meta.total ?? 0, 10);
+  readonly quotaStore = new QuotaStore();
   search = '';
   showCreate = false;
   pending: { item: DomainRecord; status: string } | null = null;
@@ -99,18 +103,65 @@ export class EntityPageComponent implements OnInit {
   highRisk(items: DomainRecord[]): number { return items.filter((item) => ['high', 'critical'].includes(item.riskLevel)).length; }
   statusCount(items: DomainRecord[]): number { return new Set(items.map((item) => item.status)).size; }
   isLicensePage(): boolean { return this.config.key === 'wasteGenerator' || this.config.key === 'carrierProfile'; }
+  isQuotaPage(): boolean { return this.config.key === 'wasteGenerator' || this.config.key === 'transferManifest'; }
   canTransition(): boolean { return this.auth.hasMinimumRole(this.config.transitionRole); }
   transitions(item: DomainRecord): readonly string[] { return TRANSITIONS[this.config.key]?.[item.status] ?? []; }
+  currentYear(): number { return new Date().getUTCFullYear(); }
 
   pageDescription(): string {
     const descriptions: Record<string, string> = {
-      wasteGenerator: '核对产废许可有效期、废物类别与证据文件。',
+      wasteGenerator: '核对产废许可有效期、年度许可额度、废物类别与证据文件。',
       carrierProfile: '复核承运许可证、有效车辆和资质证据。',
-      transferManifest: '关联产废单位与承运方，跟踪联单全流程。',
+      transferManifest: '关联产废单位与承运方，跟踪联单全流程与年度额度占用。',
       complianceCheck: '基于联单证据形成不可回退的核验决定。'
     };
     return descriptions[this.config.key] || `管理${this.config.label}状态和证据。`;
   }
+
+  // quotaRows keeps the panel focused on the records currently visible while
+  // still showing each manifest's effective-year bucket, not only this year.
+  quotaRows(): QuotaUsage[] {
+    const usage = this.quotaStore.snapshot.usage;
+    if (!usage.length) return [];
+    if (this.config.key === 'wasteGenerator') {
+      const codes = new Set(this.store.snapshot.items.map((item) => (item.code || '').toUpperCase()));
+      return usage.filter((row) => codes.has(row.generatorCode) && row.year === this.currentYear());
+    }
+    const keys = new Set(this.store.snapshot.items.map((item) =>
+      `${(item.generatorCode || '').toUpperCase()}:${this.effectiveYear(item)}`));
+    return usage.filter((row) => keys.has(`${row.generatorCode}:${row.year}`));
+  }
+
+  effectiveYear(item: DomainRecord): number {
+    return item.effectiveAt ? new Date(item.effectiveAt).getUTCFullYear() : this.currentYear();
+  }
+
+  quotaLine(item: DomainRecord): { text: string; exceeded: boolean } | null {
+    if (this.config.key === 'wasteGenerator') {
+      const usage = this.quotaStore.byGenerator(item.code, this.currentYear());
+      const quota = item.annualQuotaKg ?? usage?.annualQuotaKg ?? 0;
+      if (usage) {
+        return {
+          text: `年度上限 ${quota} kg · 已用 ${this.kg(usage.usedKg)} · 剩余 ${this.kg(usage.remainingKg)}${usage.exceeded ? ` · 超出 ${this.kg(usage.exceededKg)}` : ''}`,
+          exceeded: usage.exceeded,
+        };
+      }
+      return { text: `年度上限 ${quota} kg`, exceeded: false };
+    }
+    if (this.config.key === 'transferManifest' && item.generatorCode) {
+      const usage = this.quotaStore.byGenerator(item.generatorCode, this.effectiveYear(item));
+      if (!usage) return null;
+      const states = ['submitted', 'in_transit', 'received'];
+      const counted = states.includes(item.status);
+      return {
+        text: `${usage.year} 年度额度已用 ${this.kg(usage.usedKg)} / 上限 ${this.kg(usage.annualQuotaKg)} · 剩余 ${this.kg(usage.remainingKg)}${item.status === 'draft' ? '（草稿不占额度）' : counted ? '（本单计入）' : '（已驳回，已释放）'}`,
+        exceeded: usage.exceeded,
+      };
+    }
+    return null;
+  }
+
+  kg(value: number): string { return `${Math.round(value * 100) / 100} kg`; }
 
   domainDetail(item: DomainRecord): string {
     if (this.config.key === 'wasteGenerator') return `${item.permitNumber || '-'} · ${item.wasteCategories || '-'}`;
@@ -144,7 +195,7 @@ export class EntityPageComponent implements OnInit {
     };
     const expiresAt = new Date(now + 365 * 86_400_000).toISOString();
     const specific: Partial<DomainRecord> = this.config.key === 'wasteGenerator'
-      ? { permitNumber: `PERMIT-${String(now).slice(-8)}`, permitExpiresAt: expiresAt, wasteCategories: 'HW08 废矿物油' }
+      ? { permitNumber: `PERMIT-${String(now).slice(-8)}`, permitExpiresAt: expiresAt, annualQuotaKg: 5000, wasteCategories: 'HW08 废矿物油' }
       : this.config.key === 'carrierProfile'
         ? { licenseNumber: `CARRIER-${String(now).slice(-8)}`, licenseExpiresAt: expiresAt, vehicleCount: 6 }
         : this.config.key === 'transferManifest'
@@ -154,7 +205,10 @@ export class EntityPageComponent implements OnInit {
       await this.store.createRecord(this.config.path, { ...common, ...specific });
       this.showCreate = false;
     } catch { /* Store exposes the request error in its observable state. */ }
-    finally { this.changeDetector.detectChanges(); }
+    finally {
+      if (this.isQuotaPage()) await this.quotaStore.load();
+      this.changeDetector.detectChanges();
+    }
   }
 
   async confirmTransition(): Promise<void> {
@@ -163,11 +217,15 @@ export class EntityPageComponent implements OnInit {
       await this.store.transition(this.config.path, this.pending.item, this.pending.status);
       this.pending = null;
     } catch { /* Store exposes the request error in its observable state. */ }
-    finally { this.changeDetector.detectChanges(); }
+    finally {
+      if (this.isQuotaPage()) await this.quotaStore.load();
+      this.changeDetector.detectChanges();
+    }
   }
 
   private async load(): Promise<void> {
     await this.store.load(this.config.path, this.search, this.pagination.page(), this.pagination.pageSize());
+    if (this.isQuotaPage()) await this.quotaStore.load();
     this.changeDetector.detectChanges();
   }
 }

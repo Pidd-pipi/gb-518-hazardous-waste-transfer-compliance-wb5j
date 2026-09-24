@@ -133,19 +133,19 @@ func seedWasteGenerator(ctx context.Context, db *gorm.DB) error {
 	items := []model.WasteGenerator{
 
 		{BaseModel: model.BaseModel{Code: "WG-001", Name: "产废单位示例一", Status: "active", Version: 1,
-			Description: "用于启动验证和主要流程演示的产废单位记录"}, PermitNumber: "PERMIT-WG-001", PermitExpiresAt: now.AddDate(1, 0, 0), WasteCategories: "HW08 废矿物油",
+			Description: "用于启动验证和主要流程演示的产废单位记录"}, PermitNumber: "PERMIT-WG-001", PermitExpiresAt: now.AddDate(1, 0, 0), AnnualQuotaKg: 5000, WasteCategories: "HW08 废矿物油",
 			Facility: "危险废物转运合规核验区域1", Owner: "运行一组",
 			Category: "常规", RiskLevel: "low", MetricValue: 12.5, MetricUnit: "unit",
 			EffectiveAt: now.Add(0 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-518-01"},
 
 		{BaseModel: model.BaseModel{Code: "WG-002", Name: "产废单位示例二", Status: "restricted", Version: 1,
-			Description: "用于启动验证和主要流程演示的产废单位记录"}, PermitNumber: "PERMIT-WG-002", PermitExpiresAt: now.AddDate(0, 8, 0), WasteCategories: "HW17 表面处理废物",
+			Description: "用于启动验证和主要流程演示的产废单位记录"}, PermitNumber: "PERMIT-WG-002", PermitExpiresAt: now.AddDate(0, 8, 0), AnnualQuotaKg: 3000, WasteCategories: "HW17 表面处理废物",
 			Facility: "危险废物转运合规核验区域2", Owner: "质量复核组",
 			Category: "重点", RiskLevel: "medium", MetricValue: 25.0, MetricUnit: "%",
 			EffectiveAt: now.Add(3 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-518-02"},
 
 		{BaseModel: model.BaseModel{Code: "WG-003", Name: "产废单位示例三", Status: "suspended", Version: 1,
-			Description: "用于启动验证和主要流程演示的产废单位记录"}, PermitNumber: "PERMIT-WG-003", PermitExpiresAt: now.AddDate(0, 5, 0), WasteCategories: "HW49 其他废物",
+			Description: "用于启动验证和主要流程演示的产废单位记录"}, PermitNumber: "PERMIT-WG-003", PermitExpiresAt: now.AddDate(0, 5, 0), AnnualQuotaKg: 2000, WasteCategories: "HW49 其他废物",
 			Facility: "危险废物转运合规核验区域3", Owner: "安全主管组",
 			Category: "复核", RiskLevel: "high", MetricValue: 37.5, MetricUnit: "score",
 			EffectiveAt: now.Add(6 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-518-03"},

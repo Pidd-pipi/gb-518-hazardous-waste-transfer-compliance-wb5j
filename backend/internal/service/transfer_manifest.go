@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -23,13 +24,14 @@ type TransferManifestService interface {
 }
 
 type transferManifestService struct {
-	repository repository.TransferManifestRepository
-	generators repository.WasteGeneratorRepository
-	carriers   repository.CarrierProfileRepository
+	repository  repository.TransferManifestRepository
+	generators  repository.WasteGeneratorRepository
+	carriers    repository.CarrierProfileRepository
+	submitLocks *keyedMutex
 }
 
 func NewTransferManifestService(repo repository.TransferManifestRepository, generators repository.WasteGeneratorRepository, carriers repository.CarrierProfileRepository) TransferManifestService {
-	return &transferManifestService{repository: repo, generators: generators, carriers: carriers}
+	return &transferManifestService{repository: repo, generators: generators, carriers: carriers, submitLocks: newKeyedMutex()}
 }
 
 func (s *transferManifestService) List(ctx context.Context, query dto.PageQuery) (repository.Page[model.TransferManifest], error) {
@@ -128,9 +130,37 @@ func (s *transferManifestService) Transition(ctx context.Context, id uint, input
 	current.Status = target
 	current.Version = input.ExpectedVersion + 1
 	current.UpdatedAt = time.Now().UTC()
-	if err := s.repository.UpdateAudited(ctx, id, input.ExpectedVersion, &current, newAuditLog(actor, requestID, "transition", "TransferManifest", before, target, input.Reason)); err != nil {
+	audit := newAuditLog(actor, requestID, "transition", "TransferManifest", before, target, input.Reason)
+
+	if target == "submitted" {
+		// Serialize same-generator submissions: two concurrent manifests must
+		// not both pass the annual quota check against the same usage total.
+		generator, err := s.generators.FindByCode(ctx, current.GeneratorCode)
+		if err != nil {
+			return model.TransferManifest{}, fmt.Errorf("%w: linked generator is unavailable", ErrInvalidInput)
+		}
+		unlock := s.submitLocks.Lock(strings.ToUpper(strings.TrimSpace(current.GeneratorCode)))
+		err = s.repository.SubmitWithQuotaGuard(ctx, generator.ID, &current, input.ExpectedVersion, audit)
+		unlock.Unlock()
+		if err != nil {
+			var quotaErr *repository.QuotaExceededError
+			if errors.As(err, &quotaErr) {
+				return model.TransferManifest{}, &QuotaExceededError{
+					GeneratorCode: quotaErr.GeneratorCode, Year: quotaErr.Year,
+					AnnualQuotaKg: quotaErr.AnnualQuotaKg, UsedKg: quotaErr.UsedKg,
+					RemainingKg: quotaErr.RemainingKg, AttemptedKg: quotaErr.AttemptedKg,
+				}
+			}
+			return model.TransferManifest{}, fmt.Errorf("transition 转运清单: %w", err)
+		}
+		return s.repository.Get(ctx, id)
+	}
+
+	if err := s.repository.UpdateAudited(ctx, id, input.ExpectedVersion, &current, audit); err != nil {
 		return model.TransferManifest{}, fmt.Errorf("transition 转运清单: %w", err)
 	}
+	// Rejected manifests release their occupied weight automatically because
+	// quota aggregation only counts submitted/in_transit/received states.
 	return s.repository.Get(ctx, id)
 }
 

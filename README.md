@@ -40,6 +40,8 @@ docker compose down -v --remove-orphans
 
 - JWT 登录和 viewer/operator/reviewer/admin 四级 RBAC，后端 middleware、前端守卫、导航与按钮同步生效。
 - 联单提交和发运前会重新核验产废许可为 `active`、承运资质为 `verified`，且双方证照仍在有效期内。
+- 产废单位档案维护**年度许可额度（kg）**。联单提交时按该单 `effectiveAt` 所在自然年汇总该单位 `submitted / in_transit / received` 联单重量；超出年度上限时联单保留为 `draft`，响应返回 `quota_exceeded` 并说明上限、已用、剩余与本次重量。驳回联单自动释放占用（已签收历史继续计入）；提交在单位行级串行化并加数据库行锁，同一单位的并发提交不能一起越过上限。
+- 单位页与联单页均展示年度额度使用进度（`GET /api/quota-usage`），联单行按其生效年份显示已用/剩余及本单是否占用。
 - 联单只允许 `draft → submitted → in_transit → received`，`submitted/in_transit` 可转 `rejected`；核验决定不可回退，失败仅可升级复核。
 - 已提交联单和已决定核验不可编辑或删除；写入使用乐观锁。
 - 建档、许可/证据更新、状态变化和删除与审计日志在同一数据库事务中提交，审计保留 actor 与 request ID。

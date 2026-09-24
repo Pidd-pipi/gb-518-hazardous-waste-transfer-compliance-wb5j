@@ -58,6 +58,19 @@ func (h *SystemHandler) Health(c *gin.Context) {
 	util.OK(c, gin.H{"status": "ok", "database": "ready", "redis": redisState})
 }
 
+// QuotaUsage returns annual permit quota usage for every generator. The
+// optional year query parameter selects the natural year; it defaults to the
+// current UTC year and always includes historical years with manifests.
+func (h *SystemHandler) QuotaUsage(c *gin.Context) {
+	year, _ := strconv.Atoi(strings.TrimSpace(c.Query("year")))
+	usage, err := h.wasteGenerator.QuotaUsage(c.Request.Context(), year)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	util.OK(c, usage)
+}
+
 func (h *SystemHandler) Overview(c *gin.Context) {
 	ctx := c.Request.Context()
 	result := make(map[string]any)

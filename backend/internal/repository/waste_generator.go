@@ -11,6 +11,7 @@ import (
 // WasteGeneratorRepository owns all persistence operations for 产废单位.
 type WasteGeneratorRepository interface {
 	List(context.Context, dto.PageQuery) (Page[model.WasteGenerator], error)
+	ListAll(context.Context) ([]model.WasteGenerator, error)
 	Get(context.Context, uint) (model.WasteGenerator, error)
 	FindByCode(context.Context, string) (model.WasteGenerator, error)
 	Create(context.Context, *model.WasteGenerator) error
@@ -32,6 +33,11 @@ func NewWasteGeneratorRepository(db *gorm.DB) WasteGeneratorRepository {
 
 func (r *wasteGeneratorRepository) List(ctx context.Context, q dto.PageQuery) (Page[model.WasteGenerator], error) {
 	return r.store.List(ctx, q)
+}
+func (r *wasteGeneratorRepository) ListAll(ctx context.Context) ([]model.WasteGenerator, error) {
+	var items []model.WasteGenerator
+	err := r.store.DB(ctx).Order("code ASC").Find(&items).Error
+	return items, err
 }
 func (r *wasteGeneratorRepository) Get(ctx context.Context, id uint) (model.WasteGenerator, error) {
 	return r.store.Get(ctx, id)

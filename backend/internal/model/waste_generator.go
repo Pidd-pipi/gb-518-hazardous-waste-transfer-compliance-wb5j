@@ -9,6 +9,10 @@ type WasteGenerator struct {
 	BaseModel
 	PermitNumber    string    `json:"permitNumber" gorm:"size:80;uniqueIndex;not null"`
 	PermitExpiresAt time.Time `json:"permitExpiresAt" gorm:"index;not null"`
+	// AnnualQuotaKg caps the weight (kg) of manifests submitted/in transit/received
+	// for one calendar year, keyed by the manifest effective year. Zero is invalid;
+	// the write DTO enforces a positive value.
+	AnnualQuotaKg   float64   `json:"annualQuotaKg" gorm:"not null;default:0"`
 	WasteCategories string    `json:"wasteCategories" gorm:"size:500;not null"`
 	Facility        string    `json:"facility" gorm:"size:120;index"`
 	Owner           string    `json:"owner" gorm:"size:120;index"`

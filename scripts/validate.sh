@@ -48,6 +48,10 @@ for resource in generators carriers manifests checks; do
   curl -fsS "$backend_url/api/$resource?page=1&pageSize=20" -H "Authorization: Bearer $viewer_token" | jq -e '.data | type == "array"' >/dev/null
 done
 
+# Annual permit quota: every generator archive exposes a positive annual cap.
+curl -fsS "$backend_url/api/quota-usage" -H "Authorization: Bearer $viewer_token" \
+  | jq -e '[.data[] | select(.year == (now | date "%Y" | tonumber))] as $rows | ($rows | length) >= 3 and ([$rows[].annualQuotaKg] | all(. > 0))' >/dev/null
+
 now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 stamp=$(date '+%s')
 manifest_code="TM-VALIDATE-$stamp"
@@ -77,6 +81,47 @@ submitted=$(curl -fsS -X POST "$backend_url/api/manifests/$manifest_id/transitio
   -H "Authorization: Bearer $operator_token" -H 'X-Request-ID: validation-manifest-submit' -H 'Content-Type: application/json' \
   -d "{\"status\":\"submitted\",\"expectedVersion\":$manifest_version,\"reason\":\"generator and carrier evidence verified\"}")
 printf '%s' "$submitted" | jq -e '.data.status == "submitted" and .data.version == 2' >/dev/null
+
+# Annual quota enforcement: the quota summary now includes the submitted
+# manifest's weight, an oversized draft is retained on submit with the used,
+# remaining and attempted weights explained, and rejection releases the hold.
+quota_year=$(date '+%Y')
+quota_row=$(curl -fsS "$backend_url/api/quota-usage?year=$quota_year" -H "Authorization: Bearer $operator_token" \
+  | jq -e --arg code WG-001 --argjson y "$quota_year" '.data[] | select(.generatorCode == $code and .year == $y)')
+quota_used=$(printf '%s' "$quota_row" | jq -er '.usedKg')
+quota_remaining=$(printf '%s' "$quota_row" | jq -er '.remainingKg')
+printf '%s' "$quota_row" | jq -e '.usedKg >= 680.5 and .remainingKg == (.annualQuotaKg - .usedKg)' >/dev/null
+
+oversize=$(awk "BEGIN{print $quota_remaining + 100}")
+over_code="TM-QUOTA-$stamp"
+over_payload=$(printf '%s' "$manifest_payload" | jq --arg code "$over_code" --argjson q "$oversize" '.code=$code | .quantityKg=$q')
+over_created=$(curl -fsS -X POST "$backend_url/api/manifests" -H "Authorization: Bearer $operator_token" \
+  -H 'Content-Type: application/json' -d "$over_payload")
+over_id=$(printf '%s' "$over_created" | jq -er '.data.id')
+over_version=$(printf '%s' "$over_created" | jq -er '.data.version')
+over_response=$(curl -sS -X POST "$backend_url/api/manifests/$over_id/transition" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+  -d "{\"status\":\"submitted\",\"expectedVersion\":$over_version,\"reason\":\"must stay draft over quota\"}")
+printf '%s' "$over_response" | jq -e '.error == "quota_exceeded" and (.message | contains("已用")) and (.message | contains("剩余")) and (.message | contains("本次"))' >/dev/null
+curl -fsS "$backend_url/api/manifests/$over_id" -H "Authorization: Bearer $operator_token" | jq -e '.data.status == "draft"' >/dev/null
+
+# Rejecting a submitted manifest releases its occupied weight while received
+# history keeps counting.
+release_code="TM-RELEASE-$stamp"
+release_payload=$(printf '%s' "$manifest_payload" | jq --arg code "$release_code" '.code=$code | .quantityKg=10')
+release_created=$(curl -fsS -X POST "$backend_url/api/manifests" -H "Authorization: Bearer $operator_token" \
+  -H 'Content-Type: application/json' -d "$release_payload")
+release_id=$(printf '%s' "$release_created" | jq -er '.data.id')
+release_version=$(printf '%s' "$release_created" | jq -er '.data.version')
+curl -fsS -X POST "$backend_url/api/manifests/$release_id/transition" -H "Authorization: Bearer $operator_token" \
+  -H 'Content-Type: application/json' -d "{\"status\":\"submitted\",\"expectedVersion\":$release_version,\"reason\":\"hold then reject\"}" >/dev/null
+held_used=$(curl -fsS "$backend_url/api/quota-usage?year=$quota_year" -H "Authorization: Bearer $operator_token" \
+  | jq -er --arg code WG-001 --argjson y "$quota_year" '.data[] | select(.generatorCode == $code and .year == $y) | .usedKg')
+curl -fsS -X POST "$backend_url/api/manifests/$release_id/transition" -H "Authorization: Bearer $operator_token" \
+  -H 'Content-Type: application/json' -d '{"status":"rejected","expectedVersion":2,"reason":"release quota"}' >/dev/null
+freed_used=$(curl -fsS "$backend_url/api/quota-usage?year=$quota_year" -H "Authorization: Bearer $operator_token" \
+  | jq -er --arg code WG-001 --argjson y "$quota_year" '.data[] | select(.generatorCode == $code and .year == $y) | .usedKg')
+awk "BEGIN{exit !($held_used - $freed_used == 10)}"
 
 stale_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$backend_url/api/manifests/$manifest_id/transition" \
   -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \

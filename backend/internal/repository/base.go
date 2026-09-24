@@ -27,6 +27,10 @@ type Store[T any] struct {
 
 func NewStore[T any](db *gorm.DB) *Store[T] { return &Store[T]{db: db} }
 
+// DB exposes the context-bound handle for aggregate-specific queries that do
+// not fit the generic paging helpers.
+func (s *Store[T]) DB(ctx context.Context) *gorm.DB { return s.db.WithContext(ctx) }
+
 func (s *Store[T]) List(ctx context.Context, query dto.PageQuery) (Page[T], error) {
 	page, pageSize := normalizePage(query.Page, query.PageSize)
 	db := s.db.WithContext(ctx).Model(new(T))
